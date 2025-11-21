@@ -19,7 +19,7 @@ jobs:
     with:
       image_name: calance-us/${{ matrix.project }}
       image_registry: https://hub.docker.com/repositories/hdhakad54
-      image_registry_username: hdhakad54
+      image_registry_username: hdhakad54@gmail.com
      # docker_context_path: calance-hr/
      # dockerfile_path: calance-hr/Dockerfile
       

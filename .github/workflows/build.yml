@@ -1,4 +1,4 @@
-name: hrms-web
+name: test-web
 on:
   push:
     branches: [ "main" ]
@@ -18,7 +18,7 @@ jobs:
     uses: Calance-US/calance-workflows/.github/workflows/build.yml@v3.0.0
     with:
       image_name: dhakadh54/${{ matrix.project }}
-      image_registry: https://hub.docker.com/repositories/hdhakad54
+      image_registry: https://hub.docker.com/repository/docker/hdhakad54/test-web
       image_registry_username: hdhakad54@gmail.com
      # docker_context_path: calance-hr/
      # dockerfile_path: calance-hr/Dockerfile

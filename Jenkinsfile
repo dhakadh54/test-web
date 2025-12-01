@@ -9,7 +9,6 @@ pipeline {
   }
 
   options {
-    ansiColor('xterm')
     timeout(time: 30, unit: 'MINUTES')
   }
 

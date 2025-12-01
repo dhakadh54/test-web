@@ -5,7 +5,7 @@ pipeline {
     IMAGE_TAG  = "latest"
     NAMESPACE  = "test-ns"
     MANIFEST   = "k8s-busybox-http-${IMAGE_TAG}.yaml"
-    KUBECONFIG_CRED = "kubeconfig-file-test-cluster // change to your credential ID
+    KUBECONFIG_CRED = "kubeconfig-file-test-cluster"
   }
 
   options {

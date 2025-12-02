@@ -8,10 +8,6 @@ pipeline {
     KUBECONFIG_CRED = "kubeconfig-file-test-cluster"
   }
 
-  options {
-    timeout(time: 30, unit: 'MINUTES')
-  }
-
   stages {
     stage('Checkout') {
       steps { checkout scm }

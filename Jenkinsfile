@@ -88,6 +88,7 @@ pipeline {
     stage('3 - kubectl apply') {
       steps {
         withCredentials([file(credentialsId: env.KUBECONFIG_CRED, variable: 'KUBECONFIG_FILE')]) {
+        container('kubectl') {
           sh '''
             set -eux
             export KUBECONFIG="${KUBECONFIG_FILE}"

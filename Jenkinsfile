@@ -96,6 +96,7 @@ pipeline {
             kubectl apply -n ${NAMESPACE} -f ${MANIFEST}
           '''
         }
+        }
       }
     }
 

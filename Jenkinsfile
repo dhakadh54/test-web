@@ -2,7 +2,7 @@ pipeline {
   agent { label 'test-jenkins-cluster' }
 
   environment {
-    IMAGE_NAME = "busybox"                          // change if needed
+    IMAGE_NAME = "nginx"                          // change if needed
     IMAGE_TAG  = "latest"
     NAMESPACE  = "test-ns"
     MANIFEST   = "k8s-${IMAGE_NAME}-${IMAGE_TAG}.yaml"

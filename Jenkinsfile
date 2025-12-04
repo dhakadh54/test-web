@@ -4,7 +4,7 @@ pipeline {
   environment {
     IMAGE_NAME = "busybox"                          // change if needed
     IMAGE_TAG  = "latest"
-    NAMESPACE  = "test"
+    NAMESPACE  = "test-ns"
     MANIFEST   = "k8s-${IMAGE_NAME}-${IMAGE_TAG}.yaml"
     // Credential ID you created earlier (Secret file type)
     KUBECONFIG_CRED = "kubeconfig-file-test-cluster"

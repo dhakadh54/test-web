@@ -1,5 +1,5 @@
 pipeline {
-  agent { label 'test-jenkins-cluster1' }
+  agent { label 'test-jenkins-cluster' }
 
   environment {
     IMAGE_NAME = "busybox"                          // change if needed

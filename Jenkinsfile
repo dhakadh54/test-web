@@ -81,7 +81,7 @@ spec:
             withCredentials([file(credentialsId: "${KUBE_CRED_ID}", variable: 'KUBE_CFG')]) {
                 sh """
                 export PATH=\$HOME/bin:\$PATH
-                kubectl --kubeconfig=\$KUBE_CFG rollout status deployment/test-nginx -n default
+                kubectl --kubeconfig=\$KUBE_CFG rollout status deployment/test-nginx -n ${namespace}
                 """
             }
         }
@@ -93,7 +93,7 @@ spec:
             withCredentials([file(credentialsId: "${KUBE_CRED_ID}", variable: 'KUBE_CFG')]) {
                  sh """
                 export PATH=\$HOME/bin:\$PATH
-                kubectl --kubeconfig=\$KUBE_CFG get pods -n default
+                kubectl --kubeconfig=\$KUBE_CFG get pods -n ${namespace}
                 """
             }
         }
@@ -106,7 +106,7 @@ spec:
             withCredentials([file(credentialsId: "${KUBE_CRED_ID}", variable: 'KUBE_CFG')]) {
                 sh """
                 export PATH=\$HOME/bin:\$PATH
-                kubectl --kubeconfig=\$KUBE_CFG delete -f ${MANIFEST_FILE} -n default
+                kubectl --kubeconfig=\$KUBE_CFG delete -f ${MANIFEST_FILE} -n ${namespace}
                 """
             }
         }

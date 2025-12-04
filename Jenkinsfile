@@ -9,8 +9,8 @@ node('test-jenkins-cluster') {
     env.DOCKER_HOST = "tcp://dind:2375"
     env.DOCKER_TLS_VERIFY = "0"
 
-    // --- Stage 1: Install kubectl 
-    stage('Install kubectl') {
+    // --- Stage 1: Install kubectl using jnlp 
+    stage('Install kubectl using jnlp') {
         container('jnlp') {
              echo "Installing kubectl..."
              sh '''
@@ -25,7 +25,7 @@ node('test-jenkins-cluster') {
         }
     }
 
-    // --- Stage 2: Pull image using DIND container ✅
+    // --- Stage 2: Pull image from docker registry using dind container
     stage('Pull Image from Registry') {
         container('dind') {
             echo "Pulling Docker image using DinD..."
@@ -33,7 +33,7 @@ node('test-jenkins-cluster') {
         }
     }
 
-    // --- Stage 3: Generate manifest at runtime ✅
+    // --- Stage 3: Generate manifest at runtime of pipeline script
     stage('Generate Manifest at Runtime') {
         container('jnlp') {
             echo "Creating deployment manifest..."
@@ -41,20 +41,20 @@ node('test-jenkins-cluster') {
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: test-nginx
+  name: nginx-pod
   namespace: ${namespace}
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: test-nginx
+      app: nginx-pod
   template:
     metadata:
       labels:
-        app: test-nginx
+        app: nginx-pod
     spec:
       containers:
-      - name: test-nginx
+      - name: nginx-pod
         image: ${REGISTRY}
         ports:
         - containerPort: 80
@@ -63,7 +63,7 @@ spec:
     }
 
     // --- Stage 4: Apply manifest with kubeconfig from Jenkins credentials ✅
-    stage('kubectl Apply') {
+    stage('Create a deplyment') {
         container('jnlp') {
             echo "Deploying to Kubernetes..."
             withCredentials([file(credentialsId: "${KUBE_CRED_ID}", variable: 'KUBE_CFG')]) {
@@ -75,20 +75,20 @@ spec:
         }
     }
 
-    // --- Stage 5: Rollout check ✅
-    stage('Rollout Verification') {
+    // --- Stage 5: Rollout deployment 
+    stage('Rollout deployment') {
         container('jnlp') {
             withCredentials([file(credentialsId: "${KUBE_CRED_ID}", variable: 'KUBE_CFG')]) {
                 sh """
                 export PATH=\$HOME/bin:\$PATH
-                kubectl --kubeconfig=\$KUBE_CFG rollout status deployment/test-nginx -n ${namespace}
+                kubectl --kubeconfig=\$KUBE_CFG rollout status deployment/nginx-pod -n ${namespace}
                 """
             }
         }
     }
 
-    // --- Stage 6: Pod status ✅
-    stage('Pod Validation') {
+    // --- Stage 6: check pod is running or not
+    stage('check running pod') {
         container('jnlp') {
             withCredentials([file(credentialsId: "${KUBE_CRED_ID}", variable: 'KUBE_CFG')]) {
                  sh """
@@ -99,8 +99,8 @@ spec:
         }
     }
 
-    // --- Stage 8: Cleanup ✅
-    stage('Cleanup') {
+    // --- Stage 8: Cleanup all resources
+    stage('Cleanup all resources') {
         container('jnlp') {
             echo "Deleting deployment..."
             withCredentials([file(credentialsId: "${KUBE_CRED_ID}", variable: 'KUBE_CFG')]) {
@@ -112,5 +112,5 @@ spec:
         }
     }
 
-    echo "✅ Pipeline completed"
+    echo "All steps in pipeline are successfully executed and Pipeline is completed successfully"
 }

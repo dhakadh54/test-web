@@ -1,20 +1,17 @@
-// Jenkinsfile - Declarative pipeline (runs on Jenkins agent labeled "test-cloud")
-// Put this Jenkinsfile in the root of your git repo and configure the Jenkins job as:
-// Pipeline -> Definition: Pipeline script from SCM -> Script Path: Jenkinsfile
-
+// Jenkinsfile - Declarative pipeline with kubectl docker fallback
 pipeline {
   agent { label 'test-jenkins-cluster' }
   environment {
-    IMAGE_NAME = "busybox"                      // change if needed
+    IMAGE_NAME = "busybox"                      
     IMAGE_TAG  = "latest"
-    NAMESPACE  = "test"
+    NAMESPACE  = "jenkins"
     MANIFEST   = "k8s-${IMAGE_NAME}-${IMAGE_TAG}.yaml"
-    KUBECONFIG_CRED = "kubeconfig-file-test-cluster" // Secret File credential in Jenkins (change if different)
+    KUBECONFIG_CRED = "kubeconfig-file-test-cluster" // Secret File credential in Jenkins
+    KUBECTL_DOCKER_IMAGE = "bitnami/kubectl:latest"  // image used for fallback
   }
 
   options {
     timeout(time: 30, unit: 'MINUTES')
-    // remove ansiColor option to keep compatibility with Jenkins instances without plugin
   }
 
   stages {
@@ -97,14 +94,32 @@ pipeline {
       }
     }
 
+    // All kubectl usage below uses run_kubectl helper which falls back to docker-run bitnami/kubectl if needed
     stage('3 - kubectl apply') {
       steps {
         withCredentials([file(credentialsId: env.KUBECONFIG_CRED, variable: 'KUBECONFIG_FILE')]) {
           sh '''
             set -eux
+
+            # helper: run_kubectl ARGS...
+            # uses local kubectl if available, otherwise runs kubectl inside a docker container
+            run_kubectl() {
+              if command -v kubectl >/dev/null 2>&1; then
+                echo "Using local kubectl"
+                kubectl "$@"
+              else
+                echo "Local kubectl not found — using dockerized kubectl (${KUBECTL_DOCKER_IMAGE})"
+                # mount kubeconfig and workspace; pass through all args
+                docker run --rm -v "${KUBECONFIG_FILE}:/kubeconfig:ro" -v "${WORKSPACE}:${WORKSPACE}" ${KUBECTL_DOCKER_IMAGE} \
+                  kubectl --kubeconfig /kubeconfig "$@"
+              fi
+            }
+
             export KUBECONFIG="${KUBECONFIG_FILE}"
-            kubectl get namespace ${NAMESPACE} >/dev/null 2>&1 || kubectl create namespace ${NAMESPACE}
-            kubectl apply -n ${NAMESPACE} -f ${MANIFEST}
+            # ensure namespace exists
+            run_kubectl get namespace ${NAMESPACE} || run_kubectl create namespace ${NAMESPACE}
+            # apply manifest (manifest path is in workspace)
+            run_kubectl apply -n ${NAMESPACE} -f ${WORKSPACE}/${MANIFEST}
           '''
         }
       }
@@ -115,8 +130,18 @@ pipeline {
         withCredentials([file(credentialsId: env.KUBECONFIG_CRED, variable: 'KUBECONFIG_FILE')]) {
           sh '''
             set -eux
+
+            run_kubectl() {
+              if command -v kubectl >/dev/null 2>&1; then
+                kubectl "$@"
+              else
+                docker run --rm -v "${KUBECONFIG_FILE}:/kubeconfig:ro" -v "${WORKSPACE}:${WORKSPACE}" ${KUBECTL_DOCKER_IMAGE} \
+                  kubectl --kubeconfig /kubeconfig "$@"
+              fi
+            }
+
             export KUBECONFIG="${KUBECONFIG_FILE}"
-            kubectl rollout status deployment/${IMAGE_NAME}-http -n ${NAMESPACE} --timeout=120s
+            run_kubectl rollout status deployment/${IMAGE_NAME}-http -n ${NAMESPACE} --timeout=120s
           '''
         }
       }
@@ -127,9 +152,19 @@ pipeline {
         withCredentials([file(credentialsId: env.KUBECONFIG_CRED, variable: 'KUBECONFIG_FILE')]) {
           sh '''
             set -eux
+
+            run_kubectl() {
+              if command -v kubectl >/dev/null 2>&1; then
+                kubectl "$@"
+              else
+                docker run --rm -v "${KUBECONFIG_FILE}:/kubeconfig:ro" -v "${WORKSPACE}:${WORKSPACE}" ${KUBECTL_DOCKER_IMAGE} \
+                  kubectl --kubeconfig /kubeconfig "$@"
+              fi
+            }
+
             export KUBECONFIG="${KUBECONFIG_FILE}"
             echo "Pods in namespace ${NAMESPACE}:"
-            kubectl get pods -n ${NAMESPACE} -o wide
+            run_kubectl get pods -n ${NAMESPACE} -o wide
           '''
         }
       }
@@ -140,9 +175,22 @@ pipeline {
         withCredentials([file(credentialsId: env.KUBECONFIG_CRED, variable: 'KUBECONFIG_FILE')]) {
           sh '''
             set -eux
+
+            run_kubectl() {
+              if command -v kubectl >/dev/null 2>&1; then
+                kubectl "$@"
+              else
+                docker run --rm -v "${KUBECONFIG_FILE}:/kubeconfig:ro" -v "${WORKSPACE}:${WORKSPACE}" ${KUBECTL_DOCKER_IMAGE} \
+                  kubectl --kubeconfig /kubeconfig "$@"
+              fi
+            }
+
             export KUBECONFIG="${KUBECONFIG_FILE}"
             PODNAME="curl-test-$(date +%s)"
-            kubectl run "${PODNAME}" --rm -i --restart=Never --image=curlimages/curl -n ${NAMESPACE} --command -- sh -c '
+
+            # Use kubectl (local or dockerized) to run an ephemeral curl pod inside the cluster.
+            # Note: inner command is single-quoted to preserve variable expansion inside the container.
+            run_kubectl run "${PODNAME}" --rm -i --restart=Never --image=curlimages/curl -n ${NAMESPACE} --command -- sh -c '
               set -eux
               for i in 1 2 3 4 5; do
                 echo "Attempt ${i}: curl -sS -m 5 http://${IMAGE_NAME}-http-svc/"
@@ -167,8 +215,18 @@ pipeline {
         withCredentials([file(credentialsId: env.KUBECONFIG_CRED, variable: 'KUBECONFIG_FILE')]) {
           sh '''
             set -eux || true
+
+            run_kubectl() {
+              if command -v kubectl >/dev/null 2>&1; then
+                kubectl "$@"
+              else
+                docker run --rm -v "${KUBECONFIG_FILE}:/kubeconfig:ro" -v "${WORKSPACE}:${WORKSPACE}" ${KUBECTL_DOCKER_IMAGE} \
+                  kubectl --kubeconfig /kubeconfig "$@"
+              fi
+            }
+
             export KUBECONFIG="${KUBECONFIG_FILE}"
-            kubectl delete -n ${NAMESPACE} -f ${MANIFEST} --ignore-not-found=true || true
+            run_kubectl delete -n ${NAMESPACE} -f ${WORKSPACE}/${MANIFEST} --ignore-not-found=true || true
             echo "Cleanup completed."
           '''
         }

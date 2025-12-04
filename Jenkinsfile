@@ -1,192 +1,116 @@
-pipeline {
-  agent { label 'test-jenkins-cluster' }
+node('test-jenkins-cluster') {
 
-  environment {
-    IMAGE_NAME = "nginx"                          // change if needed
-    IMAGE_TAG  = "latest"
-    NAMESPACE  = "test-ns"
-    MANIFEST   = "k8s-${IMAGE_NAME}-${IMAGE_TAG}.yaml"
-    // Credential ID you created earlier (Secret file type)
-    KUBECONFIG_CRED = "kubeconfig-file-test-cluster"
-  }
+    def REGISTRY = "nginx:alpine"
+    def MANIFEST_FILE = "deployment.yaml"
+    def KUBE_CRED_ID = "kubeconfig-file-test-cluster"
+    def namespace = "test-ns"
 
-  options {
-    timeout(time: 30, unit: 'MINUTES')
-  }
+    // --- Jenkins env vars if shell needs them 
+    env.DOCKER_HOST = "tcp://dind:2375"
+    env.DOCKER_TLS_VERIFY = "0"
 
-  stages {
-    stage('Checkout') {
-      steps { checkout scm }
-    }
-
-    stage('1 - Pull image from registry (optional)') {
-      steps {
-        script {
-          sh '''
-            set -eux || true
-            # inside pod you may not have docker; we attempt but ignore failure
-            if command -v docker >/dev/null 2>&1; then
-              echo "Agent has docker CLI — trying local pull ${IMAGE_NAME}:${IMAGE_TAG}"
-              docker pull ${IMAGE_NAME}:${IMAGE_TAG} || true
-            else
-              echo "No docker CLI in pod — cluster will pull image"
-            fi
-          '''
+    // --- Stage 1: Install kubectl 
+    stage('Install kubectl') {
+        container('jnlp') {
+             echo "Installing kubectl..."
+             sh '''
+             # Install to user's local bin instead
+             mkdir -p $HOME/bin
+             curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+             chmod +x kubectl
+             mv kubectl $HOME/bin/
+             export PATH=$HOME/bin:$PATH
+             kubectl version --client
+            '''
         }
-      }
     }
 
-    stage('2 - Generate manifest at runtime') {
-      steps {
-        script {
-          sh """
-            set -eux
-            cat > ${MANIFEST} <<'EOF'
-            apiVersion: apps/v1
-            kind: Deployment
-            metadata:
-              name: ${IMAGE_NAME}-http
-              labels:
-                app: ${IMAGE_NAME}-http
-            spec:
-              replicas: 1
-              selector:
-                matchLabels:
-                  app: ${IMAGE_NAME}-http
-              template:
-                metadata:
-                  labels:
-                    app: ${IMAGE_NAME}-http
-                spec:
-                  containers:
-                    - name: ${IMAGE_NAME}
-                      image: ${IMAGE_NAME}:${IMAGE_TAG}
-                      command: ["/bin/sh","-c"]
-                      args:
-                        - mkdir -p /www && echo "Hello from ${IMAGE_NAME} (deployed via Jenkins)" > /www/index.html && httpd -f -p 8080 -h /www
-                      ports:
-                        - containerPort: 8080
-                      readinessProbe:
-                        httpGet:
-                          path: /
-                          port: 8080
-                        initialDelaySeconds: 2
-                        periodSeconds: 3
-            ---
-            apiVersion: v1
-            kind: Service
-            metadata:
-              name: ${IMAGE_NAME}-http-svc
-            spec:
-              selector:
-                app: ${IMAGE_NAME}-http
-              ports:
-                - protocol: TCP
-                  port: 80
-                  targetPort: 8080
-            EOF
-
-            echo "Generated manifest: ${MANIFEST}"
-            ls -l ${MANIFEST}
-            sed -n '1,200p' ${MANIFEST} || true
-          """
+    // --- Stage 2: Pull image using DIND container ✅
+    stage('Pull Image from Registry') {
+        container('dind') {
+            echo "Pulling Docker image using DinD..."
+            sh "docker pull ${REGISTRY}"
         }
-      }
     }
 
-    stage('3 - kubectl apply') {
-      steps {
-        // mount kubeconfig secret file into the container
-        withCredentials([file(credentialsId: env.KUBECONFIG_CRED, variable: 'KUBECONFIG_FILE')]) {
-          sh '''
-            set -eux
-            export KUBECONFIG="${KUBECONFIG_FILE}"
-
-            # ensure namespace exists (idempotent)
-            kubectl get namespace ${NAMESPACE} >/dev/null 2>&1 || kubectl create namespace ${NAMESPACE}
-
-            # apply manifest (manifest is in workspace)
-            kubectl apply -n ${NAMESPACE} -f ${WORKSPACE}/${MANIFEST}
-          '''
+    // --- Stage 3: Generate manifest at runtime ✅
+    stage('Generate Manifest at Runtime') {
+        container('jnlp') {
+            echo "Creating deployment manifest..."
+            writeFile file: "${MANIFEST_FILE}", text: """
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-nginx
+  namespace: ${namespace}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-nginx
+  template:
+    metadata:
+      labels:
+        app: test-nginx
+    spec:
+      containers:
+      - name: test-nginx
+        image: ${REGISTRY}
+        ports:
+        - containerPort: 80
+"""
         }
-      }
     }
 
-    stage('4 - Rollout verification') {
-      steps {
-        withCredentials([file(credentialsId: env.KUBECONFIG_CRED, variable: 'KUBECONFIG_FILE')]) {
-          sh '''
-            set -eux
-            export KUBECONFIG="${KUBECONFIG_FILE}"
-            kubectl rollout status deployment/${IMAGE_NAME}-http -n ${NAMESPACE} --timeout=120s
-          '''
+    // --- Stage 4: Apply manifest with kubeconfig from Jenkins credentials ✅
+    stage('kubectl Apply') {
+        container('jnlp') {
+            echo "Deploying to Kubernetes..."
+            withCredentials([file(credentialsId: "${KUBE_CRED_ID}", variable: 'KUBE_CFG')]) {
+                sh """
+                export PATH=\$HOME/bin:\$PATH
+                kubectl --kubeconfig=\$KUBE_CFG apply -f ${MANIFEST_FILE}
+                """
+            }
         }
-      }
     }
 
-    stage('5 - Pod validation using kubectl get pods') {
-      steps {
-        withCredentials([file(credentialsId: env.KUBECONFIG_CRED, variable: 'KUBECONFIG_FILE')]) {
-          sh '''
-            set -eux
-            export KUBECONFIG="${KUBECONFIG_FILE}"
-            echo "Pods in namespace ${NAMESPACE}:"
-            kubectl get pods -n ${NAMESPACE} -o wide
-          '''
+    // --- Stage 5: Rollout check ✅
+    stage('Rollout Verification') {
+        container('jnlp') {
+            withCredentials([file(credentialsId: "${KUBE_CRED_ID}", variable: 'KUBE_CFG')]) {
+                sh """
+                export PATH=\$HOME/bin:\$PATH
+                kubectl --kubeconfig=\$KUBE_CFG rollout status deployment/test-nginx -n default
+                """
+            }
         }
-      }
     }
 
-    stage('6 - Run a basic post-deploy test using curl (in-cluster)') {
-      steps {
-        withCredentials([file(credentialsId: env.KUBECONFIG_CRED, variable: 'KUBECONFIG_FILE')]) {
-          sh '''
-            set -eux
-            export KUBECONFIG="${KUBECONFIG_FILE}"
-            PODNAME="curl-test-$(date +%s)"
-            # use kubectl to run an ephemeral curl pod inside the cluster (this pod will run in target cluster)
-            kubectl run "${PODNAME}" --rm -i --restart=Never --image=curlimages/curl -n ${NAMESPACE} --command -- sh -c '
-              set -eux
-              for i in 1 2 3 4 5; do
-                echo "Attempt ${i}: curl -sS -m 5 http://${IMAGE_NAME}-http-svc/"
-                if curl -sS -m 5 http://${IMAGE_NAME}-http-svc/; then
-                  echo "Service responded"
-                  exit 0
-                else
-                  echo "Not ready; sleeping 2s"
-                  sleep 2
-                fi
-              done
-              echo "Service did not respond" >&2
-              exit 1
-            '
-          '''
+    // --- Stage 6: Pod status ✅
+    stage('Pod Validation') {
+        container('jnlp') {
+            withCredentials([file(credentialsId: "${KUBE_CRED_ID}", variable: 'KUBE_CFG')]) {
+                 sh """
+                export PATH=\$HOME/bin:\$PATH
+                kubectl --kubeconfig=\$KUBE_CFG get pods -n default
+                """
+            }
         }
-      }
     }
 
-    stage('7 - Cleanup using kubectl delete -f <manifest>') {
-      steps {
-        withCredentials([file(credentialsId: env.KUBECONFIG_CRED, variable: 'KUBECONFIG_FILE')]) {
-          sh '''
-            set -eux || true
-            export KUBECONFIG="${KUBECONFIG_FILE}"
-            kubectl delete -n ${NAMESPACE} -f ${WORKSPACE}/${MANIFEST} --ignore-not-found=true || true
-            echo "Cleanup complete."
-          '''
+    // --- Stage 8: Cleanup ✅
+    stage('Cleanup') {
+        container('jnlp') {
+            echo "Deleting deployment..."
+            withCredentials([file(credentialsId: "${KUBE_CRED_ID}", variable: 'KUBE_CFG')]) {
+                sh """
+                export PATH=\$HOME/bin:\$PATH
+                kubectl --kubeconfig=\$KUBE_CFG delete -f ${MANIFEST_FILE} -n default
+                """
+            }
         }
-      }
     }
-  } // stages
 
-  post {
-    always {
-      archiveArtifacts artifacts: "${MANIFEST}", fingerprint: true, allowEmptyArchive: true
-      echo 'Pipeline finished.'
-    }
-    failure {
-      echo 'Pipeline failed — check console output.'
-    }
-  }
+    echo "✅ Pipeline completed"
 }
-
